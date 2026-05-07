@@ -188,7 +188,7 @@ static uint16_t g_ack_cmd;      /* Which command was acknowledged               
 static uint8_t  g_ack_result;   /* 0 = MAV_RESULT_ACCEPTED                        */
 
 /* CRC_EXTRA is a per-message-type seed byte defined in the MAVLink spec */
-static uint8_t crc_extra_for(uint8_t msgid)
+static uint8_t crc_extra_for(uint32_t msgid)
 {
 	switch (msgid) {
 	case  0: return  50;   /* HEARTBEAT            */
@@ -200,7 +200,7 @@ static uint8_t crc_extra_for(uint8_t msgid)
 }
 
 /* Called once a complete, CRC-verified frame has been received */
-static void mav_dispatch(uint8_t msgid, const uint8_t *payload)
+static void mav_dispatch(uint32_t msgid, const uint8_t *payload)
 {
 	switch (msgid) {
 	case 0:
@@ -231,20 +231,30 @@ static void mav_dispatch(uint8_t msgid, const uint8_t *payload)
 
 /* Parser state — module-level so it persists across rx_parse_task calls */
 static enum {
-	RX_STX, RX_LEN, RX_SEQ, RX_SYS, RX_COMP, RX_MSGID,
+	RX_STX, RX_LEN,
+	RX_V2_INCOMPAT, RX_V2_COMPAT,           /* MAVLink v2 only         */
+	RX_SEQ, RX_SYS, RX_COMP,
+	RX_MSGID, RX_V2_MSGID_1, RX_V2_MSGID_2, /* v2 has 24-bit message ID */
 	RX_PAYLOAD, RX_CRC1, RX_CRC2
 } rx_state;
 
-static uint8_t  rx_plen, rx_msgid, rx_payload[64], rx_pidx, rx_crc1_got;
+static bool     rx_is_v2;
+static uint8_t  rx_plen, rx_payload[64], rx_pidx, rx_crc1_got;
+static uint32_t rx_msgid;   /* 8-bit for v1, 24-bit for v2 */
 static uint16_t rx_crc_run;
 
-/* Feed one received byte into the MAVLink v1 parser state machine */
+/* Feed one received byte into the MAVLink v1/v2 parser state machine */
 static void mav_parse_byte(uint8_t b)
 {
 	switch (rx_state) {
 
 	case RX_STX:
-		if (b == 0xFE) {
+		if (b == 0xFE) {        /* MAVLink v1 */
+			rx_is_v2   = false;
+			rx_crc_run = 0xFFFF;
+			rx_state   = RX_LEN;
+		} else if (b == 0xFD) { /* MAVLink v2 */
+			rx_is_v2   = true;
 			rx_crc_run = 0xFFFF;
 			rx_state   = RX_LEN;
 		}
@@ -253,6 +263,17 @@ static void mav_parse_byte(uint8_t b)
 	case RX_LEN:
 		crc_accum(&rx_crc_run, b);
 		rx_plen  = b;
+		rx_state = rx_is_v2 ? RX_V2_INCOMPAT : RX_SEQ;
+		break;
+
+	case RX_V2_INCOMPAT:
+		crc_accum(&rx_crc_run, b);
+		/* Non-zero incompat flags (e.g. signing) = can't parse; resync */
+		rx_state = (b == 0) ? RX_V2_COMPAT : RX_STX;
+		break;
+
+	case RX_V2_COMPAT:
+		crc_accum(&rx_crc_run, b);
 		rx_state = RX_SEQ;
 		break;
 
@@ -273,9 +294,25 @@ static void mav_parse_byte(uint8_t b)
 
 	case RX_MSGID:
 		crc_accum(&rx_crc_run, b);
-		rx_msgid = b;
+		rx_msgid = b;           /* bits 0-7 (complete for v1) */
 		rx_pidx  = 0;
-		rx_state = (rx_plen > 0) ? RX_PAYLOAD : RX_CRC1;
+		if (rx_is_v2) {
+			rx_state = RX_V2_MSGID_1;
+		} else {
+			rx_state = (rx_plen > 0) ? RX_PAYLOAD : RX_CRC1;
+		}
+		break;
+
+	case RX_V2_MSGID_1:
+		crc_accum(&rx_crc_run, b);
+		rx_msgid |= ((uint32_t)b << 8);   /* bits 8-15 */
+		rx_state  = RX_V2_MSGID_2;
+		break;
+
+	case RX_V2_MSGID_2:
+		crc_accum(&rx_crc_run, b);
+		rx_msgid |= ((uint32_t)b << 16);  /* bits 16-23 */
+		rx_state  = (rx_plen > 0) ? RX_PAYLOAD : RX_CRC1;
 		break;
 
 	case RX_PAYLOAD:
@@ -295,7 +332,6 @@ static void mav_parse_byte(uint8_t b)
 		break;
 
 	case RX_CRC2: {
-		/* Finalise CRC by mixing in the message-type CRC_EXTRA */
 		uint16_t final_crc = rx_crc_run;
 		crc_accum(&final_crc, crc_extra_for(rx_msgid));
 		uint16_t got_crc = rx_crc1_got | ((uint16_t)b << 8);
@@ -435,6 +471,7 @@ static void rx_parse_task(void)
 #define TAKEOFF_ALT_MM  9000     /* "at altitude" threshold (mm)    */
 #define LANDED_ALT_MM    500     /* "landed" threshold (mm)         */
 #define HOVER_MS        3000     /* hover duration before landing   */
+#define MAX_CMD_RETRIES    3     /* give up after this many transient rejections */
 
 static enum {
 	M_IDLE,
@@ -451,6 +488,19 @@ static enum {
 } mission_state = M_IDLE;
 
 static int64_t hover_start_ms;
+
+static const char *mav_result_str(uint8_t r)
+{
+	switch (r) {
+	case 0: return "ACCEPTED";
+	case 1: return "TEMPORARILY_REJECTED";
+	case 2: return "DENIED";
+	case 3: return "UNSUPPORTED";
+	case 4: return "FAILED (prearm checks)";
+	case 5: return "IN_PROGRESS";
+	default: return "UNKNOWN";
+	}
+}
 
 static void mission_task(void)
 {
@@ -482,19 +532,31 @@ static void mission_task(void)
 		mission_state = M_WAIT_MODE_ACK;
 		break;
 
-	case M_WAIT_MODE_ACK:
+	case M_WAIT_MODE_ACK: {
+		static int mode_retries;
+
 		if (g_ack_ready && g_ack_cmd == CMD_DO_SET_MODE) {
 			g_ack_ready = false;
 			if (g_ack_result == 0) {
 				printk("[MISSION] Mode ACK OK\n");
+				mode_retries  = 0;
 				mission_state = M_ARM;
 			} else {
-				printk("[MISSION] Mode ACK REJECTED (result=%d) — retrying\n",
-				       g_ack_result);
-				mission_state = M_SET_MODE;
+				mode_retries++;
+				printk("[MISSION] SET_MODE result=%d (%s), retry %d/%d\n",
+				       g_ack_result, mav_result_str(g_ack_result),
+				       mode_retries, MAX_CMD_RETRIES);
+				if (mode_retries >= MAX_CMD_RETRIES) {
+					printk("[MISSION] SET_MODE failed — aborting.\n");
+					mode_retries  = 0;
+					mission_state = M_DONE;
+				} else {
+					mission_state = M_SET_MODE;
+				}
 			}
 		}
 		break;
+	}
 
 	/* ── Step 2: Arm motors ──────────────────────────────── */
 	case M_ARM:
@@ -513,19 +575,41 @@ static void mission_task(void)
 		mission_state = M_WAIT_ARM_ACK;
 		break;
 
-	case M_WAIT_ARM_ACK:
+	case M_WAIT_ARM_ACK: {
+		static int arm_retries;
+
 		if (g_ack_ready && g_ack_cmd == CMD_ARM_DISARM) {
 			g_ack_ready = false;
 			if (g_ack_result == 0) {
 				printk("[MISSION] ARM ACK OK\n");
+				arm_retries   = 0;
 				mission_state = M_TAKEOFF;
+			} else if (g_ack_result == 4 /* MAV_RESULT_FAILED */) {
+				/* Prearm checks are blocking arm — retrying won't help
+				 * until hardware/config issues are resolved.            */
+				printk("[MISSION] ARM FAILED — prearm checks not passing.\n");
+				printk("[MISSION] Fix all QGC warnings (ESCs, GPS, RC) "
+				       "before arming. Aborting mission.\n");
+				arm_retries   = 0;
+				mission_state = M_DONE;
 			} else {
-				printk("[MISSION] ARM REJECTED (result=%d) — retrying\n",
-				       g_ack_result);
-				mission_state = M_ARM;
+				/* Transient rejection (e.g. IN_PROGRESS) — retry */
+				arm_retries++;
+				printk("[MISSION] ARM result=%d (%s), retry %d/%d\n",
+				       g_ack_result, mav_result_str(g_ack_result),
+				       arm_retries, MAX_CMD_RETRIES);
+				if (arm_retries >= MAX_CMD_RETRIES) {
+					printk("[MISSION] ARM failed after %d attempts "
+					       "— aborting.\n", arm_retries);
+					arm_retries   = 0;
+					mission_state = M_DONE;
+				} else {
+					mission_state = M_ARM;
+				}
 			}
 		}
 		break;
+	}
 
 	/* ── Step 3: Take off to 10 m ───────────────────────── */
 	case M_TAKEOFF:
