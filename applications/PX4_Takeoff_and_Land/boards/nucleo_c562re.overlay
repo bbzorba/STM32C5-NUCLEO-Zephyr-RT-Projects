@@ -1,0 +1,42 @@
+/*
+ * Board overlay — PX4_Takeoff_and_Land
+ *
+ * Uses USART1 (PB14 = TX, PB15 = RX) for MAVLink communication
+ * with the PX4 flight controller TELEM port.
+ * USART2 (PA2/PA3) is reserved for the console (ST-LINK VCP).
+ *
+ * Physical wiring (STM32C562RE-NUCLEO board ↔ PX4 TELEM1):
+ *   PB14  →  TELEM_RX
+ *   PB15  →  TELEM_TX
+ *   GND   →  GND
+ *
+ * PX4 side: set parameter SER_TEL1_BAUD = 57600 to match.
+ *
+ */
+
+/* Disable SPI1 — its SCK (PA5) conflicts with LD1 (led0) */
+&spi1 {
+    status = "disabled";
+};
+
+/* Set USART1 to MAVLink baud rate (board default is 115200) */
+&usart1 {
+    current-speed = <57600>;
+};
+
+/* Explicitly enable GPIOA (LED LD1 on PA5) */
+&gpioa {
+    status = "okay";
+};
+
+/* Explicitly enable GPIOC (user button on PC13) */
+&gpioc {
+    status = "okay";
+};
+
+&usart2 {
+	pinctrl-0 = <&usart2_tx_pa2 &usart2_rx_pa3>;
+	pinctrl-names = "default";
+	current-speed = <57600>;
+	status = "okay";
+};
