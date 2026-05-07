@@ -88,10 +88,32 @@ static struct {
 
 /* IMU raw data (msgid=27 RAW_IMU) */
 static struct {
-	int16_t ax, ay, az;   /* accelerometer (RAW_IMU msgid=27) */
-	int16_t gx, gy, gz;   /* gyroscope                        */
-	int16_t mx, my, mz;   /* magnetometer                     */
+	int16_t ax, ay, az;
+	int16_t gx, gy, gz;
+	int16_t mx, my, mz;
 } imu;
+
+static const char *mav_type_str(uint8_t t)
+{
+	switch (t) {
+	case  0: return "GENERIC";
+	case  1: return "FIXED_WING";
+	case  2: return "QUADROTOR";
+	case 13: return "HEXAROTOR";
+	case 14: return "OCTOROTOR";
+	default: return "OTHER";
+	}
+}
+
+static const char *mav_autopilot_str(uint8_t a)
+{
+	switch (a) {
+	case  0: return "GENERIC";
+	case  3: return "ARDUPILOT";
+	case 12: return "PX4";
+	default: return "OTHER";
+	}
+}
 
 static uint8_t msg_crc_extra(uint32_t id)
 {
@@ -109,8 +131,11 @@ static void on_message(uint32_t id, const uint8_t *p)
 		px4_hb.type      = p[4];
 		px4_hb.autopilot = p[5];
 		px4_hb.base_mode = p[6];
-		printk("[RX-HB] type=%u  autopilot=%u  base_mode=0x%02x\n",
-		       px4_hb.type, px4_hb.autopilot, px4_hb.base_mode);
+		printk("[RX-HB] type=%s  autopilot=%s  armed=%s  base_mode=0x%02x\n",
+		       mav_type_str(px4_hb.type),
+		       mav_autopilot_str(px4_hb.autopilot),
+		       (px4_hb.base_mode & 0x80) ? "YES" : "NO",
+		       px4_hb.base_mode);
 	} else if (id == 27) {
 		/* RAW_IMU: time_usec[0-7], xacc[8], yacc[10], zacc[12],
 		 *          xgyro[14], ygyro[16], zgyro[18],

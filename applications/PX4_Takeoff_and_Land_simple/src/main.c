@@ -108,11 +108,38 @@ static uint16_t ack_cmd;
 static uint8_t  ack_result;
 static int32_t  rel_alt_mm;
 
+/* Last received Pixhawk heartbeat fields */
+static struct {
+	uint8_t type, autopilot, base_mode;
+} px4_hb;
+
 static struct {
 	int16_t ax, ay, az;   /* accelerometer (RAW_IMU msgid=27) */
 	int16_t gx, gy, gz;   /* gyroscope                        */
 	int16_t mx, my, mz;   /* magnetometer                     */
 } imu;
+
+static const char *mav_type_str(uint8_t t)
+{
+	switch (t) {
+	case  0: return "GENERIC";
+	case  1: return "FIXED_WING";
+	case  2: return "QUADROTOR";
+	case 13: return "HEXAROTOR";
+	case 14: return "OCTOROTOR";
+	default: return "OTHER";
+	}
+}
+
+static const char *mav_autopilot_str(uint8_t a)
+{
+	switch (a) {
+	case  0: return "GENERIC";
+	case  3: return "ARDUPILOT";
+	case 12: return "PX4";
+	default: return "OTHER";
+	}
+}
 
 static uint8_t msg_crc_extra(uint32_t id)
 {
@@ -127,7 +154,17 @@ static uint8_t msg_crc_extra(uint32_t id)
 
 static void on_message(uint32_t id, const uint8_t *p)
 {
-	if (id == 27) {
+	if (id == 0) {
+		/* HEARTBEAT: custom_mode[0-3], type[4], autopilot[5], base_mode[6] */
+		px4_hb.type      = p[4];
+		px4_hb.autopilot = p[5];
+		px4_hb.base_mode = p[6];
+		printk("[RX-HB] type=%s  autopilot=%s  armed=%s  base_mode=0x%02x\n",
+		       mav_type_str(px4_hb.type),
+		       mav_autopilot_str(px4_hb.autopilot),
+		       (px4_hb.base_mode & 0x80) ? "YES" : "NO",
+		       px4_hb.base_mode);
+	} else if (id == 27) {
 		memcpy(&imu.ax, &p[ 8], 2); memcpy(&imu.ay, &p[10], 2); memcpy(&imu.az, &p[12], 2);
 		memcpy(&imu.gx, &p[14], 2); memcpy(&imu.gy, &p[16], 2); memcpy(&imu.gz, &p[18], 2);
 		memcpy(&imu.mx, &p[20], 2); memcpy(&imu.my, &p[22], 2); memcpy(&imu.mz, &p[24], 2);

@@ -187,6 +187,33 @@ static bool     g_ack_ready;    /* True when a fresh COMMAND_ACK was received   
 static uint16_t g_ack_cmd;      /* Which command was acknowledged                 */
 static uint8_t  g_ack_result;   /* 0 = MAV_RESULT_ACCEPTED                        */
 
+/* Last received Pixhawk heartbeat fields */
+static struct {
+	uint8_t type, autopilot, base_mode;
+} g_px4_hb;
+
+static const char *mav_type_str(uint8_t t)
+{
+	switch (t) {
+	case  0: return "GENERIC";
+	case  1: return "FIXED_WING";
+	case  2: return "QUADROTOR";
+	case 13: return "HEXAROTOR";
+	case 14: return "OCTOROTOR";
+	default: return "OTHER";
+	}
+}
+
+static const char *mav_autopilot_str(uint8_t a)
+{
+	switch (a) {
+	case  0: return "GENERIC";
+	case  3: return "ARDUPILOT";
+	case 12: return "PX4";
+	default: return "OTHER";
+	}
+}
+
 /* CRC_EXTRA is a per-message-type seed byte defined in the MAVLink spec */
 static uint8_t crc_extra_for(uint32_t msgid)
 {
@@ -206,8 +233,14 @@ static void mav_dispatch(uint32_t msgid, const uint8_t *payload)
 	case 0:
 		/* HEARTBEAT from vehicle
 		 * payload[4] = type, payload[5] = autopilot, payload[6] = base_mode */
-		printk("[RX] Pixhawk heartbeat — type=%u autopilot=%u base_mode=0x%02x\n",
-		       payload[4], payload[5], payload[6]);
+		g_px4_hb.type      = payload[4];
+		g_px4_hb.autopilot = payload[5];
+		g_px4_hb.base_mode = payload[6];
+		printk("[RX-HB] type=%s  autopilot=%s  armed=%s  base_mode=0x%02x\n",
+		       mav_type_str(g_px4_hb.type),
+		       mav_autopilot_str(g_px4_hb.autopilot),
+		       (g_px4_hb.base_mode & 0x80) ? "YES" : "NO",
+		       g_px4_hb.base_mode);
 		break;
 	case 33:
 		/* GLOBAL_POSITION_INT
