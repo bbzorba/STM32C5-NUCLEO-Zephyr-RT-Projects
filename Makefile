@@ -15,7 +15,8 @@
 #COMPILE_DIR ?= applications/blink_LED
 #COMPILE_DIR ?= applications/PX4_Takeoff_and_Land
 #COMPILE_DIR ?= applications/PX4_Takeoff_and_Land_simple
-COMPILE_DIR ?= applications/PX4_IMU_Heartbeat
+COMPILE_DIR ?= applications/Pixhawk_IMU_Heartbeat
+#COMPILE_DIR ?= applications/ArduPilot_Takeoff_and_Land_simple
 
 BOARD     ?= nucleo_c562re
 BUILD_DIR ?= $(COMPILE_DIR)/build
