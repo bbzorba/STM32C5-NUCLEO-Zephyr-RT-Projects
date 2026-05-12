@@ -42,6 +42,20 @@ void send_heartbeat(void)
 	send_frame(0, p, 9, 50);
 }
 
+void send_set_mode(uint32_t custom_mode)
+{
+	/* SET_MODE (msgid=11, plen=6, crc_extra=89)
+	 * ArduPilot does NOT reply with COMMAND_ACK for this message.
+	 * Wire layout (sorted by size): custom_mode[4], target_system[1], base_mode[1]
+	 * base_mode = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED (1) */
+	uint8_t p[6];
+
+	memcpy(&p[0], &custom_mode, 4);
+	p[4] = 1;  /* target_system = 1            */
+	p[5] = 1;  /* base_mode = CUSTOM_MODE_ENABLED */
+	send_frame(11, p, 6, 89);
+}
+
 void send_command_long(uint16_t cmd,
 		       float p1, float p2, float p3,
 		       float p4, float p5, float p6, float p7)
@@ -54,7 +68,7 @@ void send_command_long(uint16_t cmd,
 	memcpy(&p[24], &p7, 4);
 	p[28] = (uint8_t)(cmd & 0xFF);
 	p[29] = (uint8_t)(cmd >> 8);
-	p[30] = 1;   /* target_system    = 1 (PX4) */
+	p[30] = 1;   /* target_system    = 1 (ArduPilot) */
 	p[31] = 1;   /* target_component = 1       */
 	p[32] = 0;   /* confirmation               */
 	send_frame(76, p, 33, 152);
