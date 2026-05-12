@@ -3,12 +3,12 @@
     "cmake.configureOnOpen": false,
 
     // ─── Zephyr debug context (auto-generated — do not edit manually) ─────
-    "zephyr.compileDir": "applications/blink_LED",
+    "zephyr.compileDir": "applications/Pixhawk_IMU_Heartbeat",
     "zephyr.board": "nucleo_c562re",
     "zephyr.sdkVersion": "zephyr-sdk-1.0.1",
     "zephyr.gdbArch": "arm-zephyr-eabi",
     "zephyr.gdbToolchainPath": "gnu/arm-zephyr-eabi",
     "zephyr.svdFile": "STM32C562.svd",
-    "C_Cpp.default.compileCommands": "${workspaceFolder}/applications/blink_LED/build/compile_commands.json",
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/applications/Pixhawk_IMU_Heartbeat/build/compile_commands.json",
     // ─────────────────────────────────────────────────────────────────────────
 }
